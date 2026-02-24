@@ -1,7 +1,7 @@
 python-telegram-bot[socks]>=21.0
 supabase>=2.5.0
-flask==3.0.0
+flask==3.0.3
 apscheduler==3.10.4
 requests==2.31.0
 yt-dlp==2024.12.13
-aiohttp==3.9.1
+aiohttp==3.9.5
