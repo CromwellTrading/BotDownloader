@@ -24,12 +24,18 @@
         }
         .floating-logos {
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 0; opacity: 0.1;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.1;
         }
-        .floating-logos span {
+        .floating-logos i {
             position: absolute;
             font-size: 4rem;
+            color: #fff;
             filter: drop-shadow(0 0 20px rgba(100,150,255,0.5));
             animation: float 20s infinite ease-in-out;
         }
@@ -44,7 +50,6 @@
         .fl4 { top: 80%; left: 10%; animation-delay: 6s; }
         .fl5 { top: 20%; left: 80%; animation-delay: 8s; }
         .fl6 { top: 60%; left: 40%; animation-delay: 10s; }
-
         .card {
             background: rgba(26, 30, 43, 0.8);
             backdrop-filter: blur(10px);
@@ -102,11 +107,11 @@
         }
         .btn-premium {
             background: linear-gradient(145deg, #3a3145, #4a3f5a);
-            box-shadow: 0 12px 0 #2a2330;
+            box-shadow: 0 12px 0 #2a2330, 0 15px 25px rgba(0,0,0,0.5);
         }
         .btn-admin {
             background: linear-gradient(145deg, #1f3a3a, #2a4a4a);
-            box-shadow: 0 12px 0 #142525;
+            box-shadow: 0 12px 0 #142525, 0 15px 25px rgba(0,0,0,0.5);
         }
         .user-info {
             background: rgba(20, 24, 35, 0.7);
@@ -128,7 +133,9 @@
             border: 1px solid gold;
             box-shadow: 0 0 15px gold;
         }
-        .video-count { color: #a0aec0; }
+        .video-count {
+            color: #a0aec0;
+        }
         .admin-panel {
             background: rgba(10, 20, 30, 0.8);
             border-radius: 32px;
@@ -137,7 +144,9 @@
             border: 1px solid #00aaff;
             display: none;
         }
-        .admin-panel.visible { display: block; }
+        .admin-panel.visible {
+            display: block;
+        }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -154,6 +163,9 @@
             font-size: 1.8rem;
             font-weight: bold;
             color: gold;
+        }
+        .pending-list {
+            margin-top: 20px;
         }
         .pending-item {
             background: #252b3b;
@@ -173,7 +185,10 @@
             box-shadow: 0 4px 0 #1f232e;
             transition: 0.05s linear;
         }
-        .btn-small:active { transform: translateY(4px); box-shadow: none; }
+        .btn-small:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #1f232e;
+        }
         @media (max-width: 600px) {
             .btn-3d { font-size: 1.2rem; padding: 14px 24px; min-width: 150px; }
             h1 { font-size: 2rem; }
@@ -182,79 +197,93 @@
 </head>
 <body>
     <div class="floating-logos">
-        <span class="fl1">📹</span>
-        <span class="fl2">🎵</span>
-        <span class="fl3">📺</span>
-        <span class="fl4">🎬</span>
-        <span class="fl5">📱</span>
-        <span class="fl6">🎮</span>
+        <i class="fl1">📹</i>
+        <i class="fl2">🎵</i>
+        <i class="fl3">📺</i>
+        <i class="fl4">🎬</i>
+        <i class="fl5">📱</i>
+        <i class="fl6">🎮</i>
     </div>
     <div class="app-container">
         <div class="card">
             <h1>⚡ DOWNLOAD BOT</h1>
             <div class="subtitle">Descarga videos de 1000+ sitios · Planes flexibles</div>
 
-            <div class="user-info" id="userInfo">Cargando...</div>
+            <div class="user-info" id="userInfo">
+                <span>Cargando...</span>
+            </div>
 
             <div class="button-group" id="mainButtons">
                 <button class="btn-3d" id="btnBasico">BÁSICO</button>
                 <button class="btn-3d btn-premium" id="btnPremium">PREMIUM</button>
-                <button class="btn-3d btn-admin" id="btnAdmin" style="display:none;">ADMIN</button>
+                <button class="btn-3d btn-admin" id="btnAdmin" style="display: none;">ADMIN</button>
             </div>
 
-            <div id="paymentPanel"></div>
+            <div id="paymentPanel" style="display: none;"></div>
             <div id="adminPanel" class="admin-panel"></div>
         </div>
     </div>
 
     <script>
-        const BASE_URL = window.location.origin;
+        // Variables globales
         let chatId = null;
         let userPlan = 'free';
         let videosUsed = 0;
         let planLimit = 5;
         let isAdmin = false;
+        const ADMIN_CHAT_ID = 123456789; // Reemplazar con tu chat_id
 
         async function getChatId() {
-            // Si viene de Telegram WebApp, podemos obtener initData
+            // Intentar obtener de Telegram WebApp
             if (window.Telegram && Telegram.WebApp) {
                 const initData = Telegram.WebApp.initData;
-                // Aquí deberías parsear y obtener el chat_id (requiere backend)
-                // Por simplicidad, pedimos manual
-                chatId = parseInt(prompt("Ingresa tu ID de Telegram (chat_id):"));
+                // Aquí podrías parsear y obtener el chat_id si está incluido en la URL de inicio
+                // Por simplicidad, pedimos al usuario que ingrese su ID (solo para demo)
+                let id = prompt("Ingresa tu ID de Telegram (chat_id) para vincular:");
+                if (id) chatId = parseInt(id);
             } else {
+                // Modo prueba (fuera de Telegram)
                 chatId = parseInt(prompt("Ingresa tu chat_id (modo prueba):") || "0");
             }
             if (chatId) {
+                isAdmin = (chatId === ADMIN_CHAT_ID);
                 await fetchUserData();
             }
         }
 
         async function fetchUserData() {
             try {
-                const res = await fetch(`${BASE_URL}/api/user/${chatId}`);
-                if (!res.ok) throw new Error('Usuario no encontrado');
-                const data = await res.json();
-                userPlan = data.plan;
-                videosUsed = data.videos_used;
-                planLimit = data.limit;
-                isAdmin = (chatId === ADMIN_CHAT_ID); // Necesitas pasar ADMIN_CHAT_ID desde backend
-                document.getElementById('userInfo').innerHTML = `
-                    <span>👤 ID: ${chatId}</span>
-                    <span class="plan-badge">${userPlan.toUpperCase()}</span>
-                    <span class="video-count">📊 ${videosUsed}/${planLimit} descargas</span>
-                `;
-                if (isAdmin) {
-                    document.getElementById('btnAdmin').style.display = 'inline-block';
-                    cargarPanelAdmin();
+                const res = await fetch(`/api/user/${chatId}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    userPlan = data.plan;
+                    videosUsed = data.videos_used;
+                    planLimit = data.limit;
+                    updateUI();
+                } else {
+                    document.getElementById('userInfo').innerHTML = '<span>Usuario no encontrado. Usa /start en el bot primero.</span>';
                 }
             } catch (e) {
-                document.getElementById('userInfo').innerText = '❌ Usuario no encontrado. Usa /start en el bot.';
+                console.error(e);
+                document.getElementById('userInfo').innerHTML = '<span>Error al cargar datos</span>';
+            }
+        }
+
+        function updateUI() {
+            const userDiv = document.getElementById('userInfo');
+            userDiv.innerHTML = `
+                <span>👤 ID: ${chatId}</span>
+                <span class="plan-badge">${userPlan.toUpperCase()}</span>
+                <span class="video-count">📊 ${videosUsed}/${planLimit} descargas</span>
+            `;
+            if (isAdmin) {
+                document.getElementById('btnAdmin').style.display = 'inline-block';
+                cargarPanelAdmin();
             }
         }
 
         async function cargarPanelAdmin() {
-            const res = await fetch(`${BASE_URL}/api/admin/stats`);
+            const res = await fetch('/api/admin/stats');
             const stats = await res.json();
             let html = '<h2>👑 Panel Admin</h2><div class="stats-grid">';
             html += `<div class="stat-card"><div>Usuarios</div><div class="stat-value">${stats.total_users}</div></div>`;
@@ -262,75 +291,68 @@
             html += `<div class="stat-card"><div>Semana</div><div class="stat-value">${stats.week_income} CUP</div></div>`;
             html += `<div class="stat-card"><div>Mes</div><div class="stat-value">${stats.month_income} CUP</div></div>`;
             html += `<div class="stat-card"><div>Pendientes</div><div class="stat-value">${stats.pending_tickets}</div></div>`;
-            html += '</div><div id="pendingList"></div>';
+            html += '</div><div class="pending-list" id="pendingList"></div>';
             document.getElementById('adminPanel').innerHTML = html;
             document.getElementById('adminPanel').classList.add('visible');
 
-            const pendRes = await fetch(`${BASE_URL}/api/admin/pending-payments`);
+            const pendRes = await fetch('/api/admin/pending-payments');
             const pendientes = await pendRes.json();
             let listHtml = '<h3>Tickets pendientes:</h3>';
             pendientes.forEach(p => {
-                listHtml += `<div class="pending-item">#${p.id} - ${p.plan_purchased} - ${p.amount} CUP</div>`;
+                listHtml += `<div class="pending-item">#${p.id} - ${p.plan_purchased} - ${p.amount} CUP - <button class="btn-small" onclick="completarManual(${p.id})">✅ Completar</button></div>`;
             });
             document.getElementById('pendingList').innerHTML = listHtml;
         }
 
-        window.onload = getChatId;
+        async function completarManual(paymentId) {
+            // Esta función llamaría a un endpoint de admin para marcar como pagado manualmente
+            alert('Función no implementada en este demo');
+        }
 
         document.getElementById('btnBasico').addEventListener('click', () => iniciarPago('basico'));
         document.getElementById('btnPremium').addEventListener('click', () => iniciarPago('premium'));
 
         async function iniciarPago(plan) {
-            if (!chatId) return alert("Primero identifícate");
-            const pend = await fetch(`${BASE_URL}/api/pending/${chatId}`).then(r => r.json());
+            if (!chatId) return alert("Primero identifícate (ingresa chat_id)");
+            const pend = await fetch(`/api/pending/${chatId}`).then(r=>r.json());
             if (pend.exists) {
-                if (confirm("Ya tienes una solicitud pendiente. ¿Cancelarla y crear nueva?")) {
-                    await fetch(`${BASE_URL}/api/cancel-request`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({chat_id: chatId})
-                    });
+                if (confirm("Ya tienes una solicitud pendiente. ¿Quieres cancelarla y crear una nueva?")) {
+                    await fetch('/api/cancel-request', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chat_id:chatId})});
                 } else {
                     return;
                 }
             }
-            const metodo = prompt("Elige método:\n1-Tarjeta (CUP)\n2-Saldo móvil (CUP)\n3-USDT");
+            const metodo = prompt("Elige método: 1-Tarjeta (CUP), 2-Saldo móvil (CUP), 3-USDT");
             if (metodo === '1') {
-                alert(`Transfiere ${plan==='basico'?250:600} CUP a la tarjeta 9234567890123456. Luego ingresa tu teléfono.`);
-                let telefono = prompt("Número de teléfono usado:");
+                alert(`Transfiere ${plan==='basico'?250:600} CUP a la tarjeta 9234567890123456. Luego ingresa tu número de teléfono.`);
+                let telefono = prompt("Número de teléfono usado en Transfermóvil:");
                 if (telefono) {
-                    await fetch(`${BASE_URL}/api/create-payment-ticket`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({chat_id: chatId, plan, metodo: 'tarjeta', telefono})
+                    const res = await fetch('/api/create-payment-ticket', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({chat_id:chatId, plan, metodo:'tarjeta', telefono})
                     });
-                    alert("Ticket creado. Espera confirmación.");
+                    if (res.ok) alert("Ticket creado. Espera la confirmación.");
                 }
             } else if (metodo === '2') {
-                alert(`Recarga ${plan==='basico'?120:300} CUP al número 51234567. Luego ingresa tu teléfono.`);
-                let telefono = prompt("Tu número de teléfono:");
+                alert(`Recarga ${plan==='basico'?120:300} CUP al número 51234567. Luego ingresa tu número.`);
+                let telefono = prompt("Tu número de teléfono (desde donde enviaste el saldo):");
                 if (telefono) {
-                    await fetch(`${BASE_URL}/api/create-payment-ticket`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({chat_id: chatId, plan, metodo: 'saldo', telefono})
-                    });
+                    await fetch('/api/create-payment-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({chat_id:chatId, plan, metodo:'saldo', telefono})});
                     alert("Ticket creado.");
                 }
             } else if (metodo === '3') {
-                const res = await fetch(`${BASE_URL}/api/create-invoice`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chat_id: chatId, plan})
-                });
+                const res = await fetch('/api/create-invoice', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({chat_id:chatId, plan})});
                 const inv = await res.json();
                 if (inv.error) {
                     alert(inv.error);
                 } else {
-                    alert(`Paga ${inv.amount} USDT (BEP20) a:\n${inv.address}\nInvoice: ${inv.invoice_id}\nExpira en 30 min.`);
+                    alert(`Paga ${inv.amount} USDT (BEP20) a la dirección:\n${inv.address}\nInvoice ID: ${inv.invoice_id}\nLa factura expira en 30 minutos.`);
                 }
             }
         }
+
+        window.onload = getChatId;
     </script>
 </body>
 </html>
