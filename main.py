@@ -6,9 +6,8 @@ import json
 import uuid
 import hmac
 import requests
-import tempfile
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from supabase import create_client, Client
@@ -26,21 +25,22 @@ HELEKET_API_KEY = os.environ.get("HELEKET_API_KEY")
 PO_TOKEN_PROVIDER = os.environ.get("PO_TOKEN_PROVIDER")  # URL del servicio bgutil-ytdlp-pot-provider (opcional)
 RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
 PORT = int(os.environ.get("PORT", 8080))
+PROXY_URL = os.environ.get("PROXY_URL")  # Opcional, para redes bloqueadas
 
-# Datos de pago fijos (para Transfermóvil y Cubacel)
+# Datos de pago fijos
 TARJETA_NUMERO = "9234567890123456"  # CAMBIAR por tu tarjeta
 CUENTA_SALDO = "51234567"            # CAMBIAR por tu número de teléfono para recibir saldo
 
-# Precios (en CUP y USDT)
+# Precios
 PRECIOS = {
     "basico": {"tarjeta": 250, "saldo": 120, "usdt": 0.5},
     "premium": {"tarjeta": 600, "saldo": 300, "usdt": 1.0},
 }
-PROMO_DESCUENTO = 0.75  # 75% de descuento para nuevos usuarios (pagan 0.75 USDT en lugar de 1)
+PROMO_DESCUENTO = 0.75
 REFERIDO_DESC_BASICO = 10
 REFERIDO_DESC_PREMIUM = 15
 
-# Configuración de logs
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -189,12 +189,10 @@ async def get_format_list(url, chat_id, plan_info):
                                     }
                                 }
                                 logger.info("PO Token obtenido correctamente")
-                # También podríamos usar --impersonate
                 ydl_opts['impersonate'] = 'chrome-124'
             except Exception as e:
                 logger.error(f"Error obteniendo PO Token: {e}")
         elif plan_info['plan'] != 'premium':
-            # Si no es premium, no se permite YouTube
             return None, "YouTube solo está disponible en plan Premium", 0
 
     loop = asyncio.get_event_loop()
@@ -410,7 +408,6 @@ def api_create_invoice():
         monto_usdt = PROMO_DESCUENTO
 
     # Llamar a Heleket para crear factura
-    import requests
     headers = {
         "Content-Type": "application/json",
         "X-API-Key": HELEKET_API_KEY
@@ -514,7 +511,13 @@ def keepalive():
     return "OK", 200
 
 # ================== BOT DE TELEGRAM ==================
-application = ApplicationBuilder().token(TELEGRAM_TOKEN).connect_timeout(30).read_timeout(30).build()
+# Construir aplicación con proxy opcional
+builder = ApplicationBuilder().token(TELEGRAM_TOKEN)
+if PROXY_URL:
+    builder.proxy_url(PROXY_URL).get_updates_proxy_url(PROXY_URL)
+application = builder.build()
+
+# --- Handlers del bot ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -534,7 +537,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 *¡Bienvenido al Bot Descargador!*\n\n"
         f"📊 *Tu plan:* `{user['plan'].upper()}`\n"
         f"📥 *Descargas usadas:* {user['videos_used']}/{get_limit(user['plan'])} ({get_period(user['plan'])})\n"
-        f"🎁 *Promoción:* Si eres nuevo, tienes 24h para probar Premium con 75% de descuento (solo 0.75 USDT o equivalente).\n\n"
+        f"🎁 *Promoción:* Si eres nuevo, tienes 24h para probar Premium con 75% de descuento.\n\n"
         f"Envía un enlace para comenzar a descargar."
     )
     keyboard = [
@@ -724,7 +727,6 @@ async def procesar_pago_usdt(query, context):
 
     # Crear factura vía API (que a su vez llama a Heleket)
     try:
-        import requests
         headers = {"Content-Type": "application/json"}
         payload = {"chat_id": chat_id, "plan": plan}
         resp = requests.post(f"https://{RENDER_EXTERNAL_HOSTNAME}/api/create-invoice", json=payload, headers=headers)
@@ -766,43 +768,34 @@ async def volver_inicio(query):
     await query.edit_message_text("¡Bienvenido de nuevo!", reply_markup=reply_markup)
 
 async def recibir_telefono(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'esperando_telefono' not in context.user_data:
-        return
-    metodo = context.user_data['esperando_telefono']
+    metodo = context.user_data.get('esperando_telefono')
     telefono = update.message.text.strip()
     if not telefono.isdigit() or len(telefono) < 8:
         await update.message.reply_text("❌ Número inválido. Debe tener al menos 8 dígitos. Intenta de nuevo:")
         return
     chat_id = update.effective_chat.id
-    plan = context.user_data['plan_seleccionado']
-    monto = context.user_data['monto']
-    if metodo == 'tarjeta':
-        create_pending_payment(chat_id, plan, 'tarjeta', telefono, monto, TARJETA_NUMERO)
+    plan = context.user_data.get('plan_seleccionado')
+    monto = context.user_data.get('monto')
+    try:
+        create_pending_payment(chat_id, plan, metodo, telefono, monto,
+                               TARJETA_NUMERO if metodo == 'tarjeta' else None)
         await update.message.reply_text(
-            "✅ ¡Ticket de pago creado!\n\n"
-            "En cuanto detectemos tu pago (normalmente en pocos minutos), se activará tu plan automáticamente.\n"
-            "Recibirás una notificación cuando esté listo.\n\n"
-            "Puedes ver el estado en /mis_pagos"
+            f"✅ ¡Ticket de pago creado para {metodo.upper()}!\n\n"
+            "En cuanto detectemos tu pago, se activará tu plan automáticamente."
         )
-    elif metodo == 'saldo':
-        create_pending_payment(chat_id, plan, 'saldo', telefono, monto, None)
-        await update.message.reply_text("✅ Ticket creado. Espera la confirmación.")
-    context.user_data.pop('esperando_telefono')
+        context.user_data.pop('esperando_telefono', None)
+    except Exception as e:
+        logger.error(f"Error creando pago: {e}")
+        await update.message.reply_text("❌ Error al procesar tu solicitud.")
 
-# Handler para mensajes con enlaces (descargas)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     url = update.message.text.strip()
-    if not url.startswith('http'):
-        await update.message.reply_text("Por favor, envía un enlace válido.")
-        return
-
     user = get_user(chat_id)
     if not user:
         await update.message.reply_text("Primero usa /start para registrarte.")
         return
 
-    # Verificar límite
     if user['videos_used'] >= get_limit(user['plan']):
         period = "hoy" if user['plan'] == 'free' else "este mes"
         await update.message.reply_text(f"❌ Has alcanzado tu límite de {get_limit(user['plan'])} descargas {period}. Mejora tu plan.")
@@ -876,12 +869,22 @@ async def format_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(f"❌ Error al obtener URL: {str(e)[:200]}")
 
+# Manejador global de mensajes de texto
+async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if context.user_data.get('esperando_telefono'):
+        await recibir_telefono(update, context)
+        return
+    if text.startswith('http'):
+        await handle_message(update, context)
+    else:
+        await update.message.reply_text("❌ Por favor, envía un enlace válido o usa el menú.")
+
 # Registrar handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_telefono))
+application.add_handler(CallbackQueryHandler(button_handler, pattern="^(planes|ventajas|referidos|soporte|pagar_|pais_|metodo_|volver_inicio|cancelar_solicitud)$"))
 application.add_handler(CallbackQueryHandler(format_callback, pattern="^format_"))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, global_message_handler))
 
 # ================== SCHEDULER ==================
 scheduler = BackgroundScheduler()
@@ -916,13 +919,15 @@ def keepalive_job():
 
 scheduler.add_job(check_promo_reminders, 'interval', hours=1)
 scheduler.add_job(keepalive_job, 'interval', minutes=5)
-scheduler.start()
 
 # ================== MAIN ==================
-def run_bot():
-    application.run_polling()
+def run_flask():
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    if not scheduler.running:
+        scheduler.start()
+    # Ejecutar bot en hilo separado
+    threading.Thread(target=application.run_polling, kwargs={"drop_pending_updates": True}, daemon=True).start()
+    # Ejecutar Flask en hilo principal
+    run_flask()
