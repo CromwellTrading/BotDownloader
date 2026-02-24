@@ -8,7 +8,7 @@ import uuid
 import hmac
 import requests
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify, render_template_string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from supabase import create_client, Client
@@ -23,6 +23,7 @@ PAYMENT_WEBHOOK_TOKEN = os.environ.get("PAYMENT_WEBHOOK_TOKEN")  # token compart
 HELEKET_MERCHANT_UUID = os.environ.get("HELEKET_MERCHANT_UUID")
 HELEKET_API_KEY = os.environ.get("HELEKET_API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
+RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
 
 # Configuración de pagos
 TARJETA_NUMERO = "9234567890123456"  # reemplazar con tu tarjeta
@@ -57,6 +58,11 @@ def create_user(chat_id, promo_end=None, referral_code=None):
         "referral_code": referral_code or str(uuid.uuid4())[:8],
         "promo_end": promo_end.isoformat() if promo_end else None,
         "discount_next_month": 0,
+        "notified_5h": False,
+        "notified_1h": False,
+        "notified_30m": False,
+        "notified_10m": False,
+        "notified_expired": False,
     }
     supabase.table("users").insert(data).execute()
 
@@ -77,10 +83,10 @@ def get_pending_payment(chat_id):
 def create_pending_payment(chat_id, plan, metodo, telefono, monto, tarjeta_destino=None, invoice_id=None):
     data = {
         "chat_id": chat_id,
-        "plan": plan,
-        "method": metodo,
+        "plan_purchased": plan,
         "amount": monto,
         "currency": "CUP" if metodo in ["tarjeta", "saldo"] else "USDT",
+        "method": metodo,
         "trans_id": None,
         "status": "pending",
         "metadata": {
@@ -112,7 +118,6 @@ def find_pending_payment(metodo, telefono=None, monto=None, tarjeta=None, invoic
     return result.data[0] if result.data else None
 
 def activate_plan(chat_id, plan):
-    # Calcular reset_date según el plan
     if plan == "free":
         reset = timedelta(days=1)
     else:
@@ -124,7 +129,6 @@ def aplicar_descuento_referido(chat_id):
     user = get_user(chat_id)
     if user and user.get("referrer_id"):
         referrer_id = user["referrer_id"]
-        # Aumentar descuento del referente según el plan comprado
         plan = user["plan"]
         descuento = REFERIDO_DESC_BASICO if plan == "basico" else REFERIDO_DESC_PREMIUM
         referrer = get_user(referrer_id)
@@ -214,7 +218,7 @@ def procesar_transfermovil(data):
     ticket = find_pending_payment(metodo='tarjeta', telefono=telefono, monto=monto, tarjeta=tarjeta_destino)
     if ticket:
         chat_id = ticket['chat_id']
-        plan = ticket['plan']
+        plan = ticket['plan_purchased']
         activate_plan(chat_id, plan)
         complete_payment(ticket['id'], trans_id)
         aplicar_descuento_referido(chat_id)
@@ -234,7 +238,7 @@ def procesar_cubacel(data):
     ticket = find_pending_payment(metodo='saldo', telefono=remitente, monto=monto)
     if ticket:
         chat_id = ticket['chat_id']
-        plan = ticket['plan']
+        plan = ticket['plan_purchased']
         activate_plan(chat_id, plan)
         complete_payment(ticket['id'], trans_id)
         aplicar_descuento_referido(chat_id)
@@ -244,7 +248,6 @@ def procesar_cubacel(data):
 
 def enviar_notificacion(chat_id, plan):
     # Enviar mensaje por el bot (necesita el bot)
-    # Se llamará desde un hilo para no bloquear el webhook
     import telegram
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     bot.send_message(chat_id=chat_id, text=f"✅ ¡Pago recibido! Tu plan *{plan.upper()}* está activado.", parse_mode='Markdown')
@@ -270,7 +273,7 @@ def heleket_webhook():
         ticket = find_pending_payment(metodo='usdt', invoice_id=invoice_id)
         if ticket:
             chat_id = ticket['chat_id']
-            plan = ticket['plan']
+            plan = ticket['plan_purchased']
             activate_plan(chat_id, plan)
             complete_payment(ticket['id'], invoice_id)
             aplicar_descuento_referido(chat_id)
@@ -555,7 +558,7 @@ def webapp():
     </head>
     <body>
         <div class="floating-logos">
-            <i class="fl1">📹</i> <!-- Reemplazar con logos reales (imágenes) -->
+            <i class="fl1">📹</i>
             <i class="fl2">🎵</i>
             <i class="fl3">📺</i>
             <i class="fl4">🎬</i>
@@ -584,16 +587,14 @@ def webapp():
 
         <script>
             // Variables globales
-            const TELEGRAM_INIT_DATA = '{{ telegram_user }}'; // si quieres pasar datos desde el backend
             let chatId = null;
             let userPlan = 'free';
             let videosUsed = 0;
             let planLimit = 5;
             let isAdmin = false;
 
-            // Simular obtención de chatId (en producción lo pasarías desde el backend)
+            // Obtener chat_id de Telegram WebApp si está disponible
             async function getChatId() {
-                // Si la webapp se abre desde Telegram, window.Telegram.WebApp.initData
                 if (window.Telegram && Telegram.WebApp) {
                     const initData = Telegram.WebApp.initData;
                     // Aquí podrías parsear y obtener el chat_id si lo incluyes en la URL
@@ -611,16 +612,17 @@ def webapp():
 
             async function fetchUserData() {
                 try {
-                    // Llamar a un endpoint que devuelva datos del usuario (necesitas crearlo)
-                    // Por ahora simulamos
                     const res = await fetch(`/api/user/${chatId}`);
                     if (res.ok) {
                         const data = await res.json();
                         userPlan = data.plan;
                         videosUsed = data.videos_used;
                         planLimit = data.limit;
-                        isAdmin = (chatId === {{ admin_chat_id }});
+                        isAdmin = (chatId === """ + str(ADMIN_CHAT_ID) + """);
                         updateUI();
+                    } else {
+                        // Usuario no existe, crear?
+                        alert("Usuario no encontrado. Usa el bot primero.");
                     }
                 } catch (e) {
                     console.error(e);
@@ -657,14 +659,13 @@ def webapp():
                 const pendientes = await pendRes.json();
                 let listHtml = '<h3>Tickets pendientes:</h3>';
                 pendientes.forEach(p => {
-                    listHtml += `<div class="pending-item">#${p.id} - ${p.plan} - ${p.amount} CUP - <button class="btn-small" onclick="completarManual(${p.id})">✅ Completar</button></div>`;
+                    listHtml += `<div class="pending-item">#${p.id} - ${p.plan_purchased} - ${p.amount} CUP - <button class="btn-small" onclick="completarManual(${p.id})">✅ Completar</button></div>`;
                 });
                 document.getElementById('pendingList').innerHTML = listHtml;
             }
 
             window.onload = getChatId;
 
-            // Botones de planes
             document.getElementById('btnBasico').addEventListener('click', () => iniciarPago('basico'));
             document.getElementById('btnPremium').addEventListener('click', () => iniciarPago('premium'));
 
@@ -688,6 +689,7 @@ def webapp():
                     if (telefono) {
                         await fetch('/api/create-payment-ticket', {
                             method:'POST',
+                            headers:{'Content-Type':'application/json'},
                             body: JSON.stringify({chat_id:chatId, plan, metodo:'tarjeta', telefono})
                         });
                         alert("Ticket creado. Espera la confirmación.");
@@ -696,17 +698,17 @@ def webapp():
                     alert(`Recarga ${plan==='basico'?120:300} CUP al número 51234567 (o el que corresponda). Luego ingresa tu número.`);
                     let telefono = prompt("Tu número de teléfono (desde donde enviaste el saldo):");
                     if (telefono) {
-                        await fetch('/api/create-payment-ticket', {method:'POST', body: JSON.stringify({chat_id:chatId, plan, metodo:'saldo', telefono})});
+                        await fetch('/api/create-payment-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({chat_id:chatId, plan, metodo:'saldo', telefono})});
                         alert("Ticket creado.");
                     }
                 } else if (metodo === '3') {
                     // Crear factura Heleket
-                    const res = await fetch('/api/create-invoice', {method:'POST', body: JSON.stringify({chat_id:chatId, plan})});
+                    const res = await fetch('/api/create-invoice', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({chat_id:chatId, plan})});
                     const inv = await res.json();
                     if (inv.error) {
                         alert(inv.error);
                     } else {
-                        alert(`Paga ${inv.amount} USDT (BEP20) a la dirección: ${inv.address}\nInvoice ID: ${inv.invoice_id}\nLa factura expira en 30 minutos.`);
+                        alert(`Paga ${inv.amount} USDT (BEP20) a la dirección: ${inv.address}\\nInvoice ID: ${inv.invoice_id}\\nLa factura expira en 30 minutos.`);
                     }
                 }
             }
@@ -714,8 +716,6 @@ def webapp():
     </body>
     </html>
     """
-    # Reemplazar variables
-    html = html.replace("{{ admin_chat_id }}", str(ADMIN_CHAT_ID))
     return render_template_string(html)
 
 # Endpoints auxiliares para la webapp
@@ -744,7 +744,6 @@ def api_create_payment_ticket():
     telefono = data.get('telefono')
     if not all([chat_id, plan, metodo, telefono]):
         return jsonify({"error": "Faltan datos"}), 400
-    # Verificar pendiente
     if get_pending_payment(chat_id):
         return jsonify({"error": "Ya tienes una solicitud pendiente"}), 400
     monto = PRECIOS[plan][metodo]  # 'tarjeta' o 'saldo'
@@ -796,7 +795,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎁 Ventajas", callback_data="ventajas")],
         [InlineKeyboardButton("👥 Referidos", callback_data="referidos")],
         [InlineKeyboardButton("🆘 Soporte", callback_data="soporte")],
-        [InlineKeyboardButton("🌐 WebApp", url=f"https://{request.host}/webapp")],
+        [InlineKeyboardButton("🌐 WebApp", url=f"https://{RENDER_EXTERNAL_HOSTNAME}/webapp")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
@@ -858,7 +857,18 @@ async def mostrar_ventajas(query):
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
     await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-async_todos mostrar_referidos(query, context):
+async def mostrar_soporte(query):
+    texto = (
+        "🆘 *Soporte*\n\n"
+        "Si tienes problemas, escribe tu consulta aquí mismo y un administrador te responderá a la mayor brevedad.\n\n"
+        "También puedes hacer una donación voluntaria a nuestra wallet USDT (BEP20):\n"
+        f"`{USDT_WALLET}`\n\n"
+        "¡Gracias por apoyar el proyecto! 💙"
+    )
+    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
+    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def mostrar_referidos(query, context):
     chat_id = query.from_user.id
     user = get_user(chat_id)
     codigo = user['referral_code']
@@ -871,17 +881,6 @@ async_todos mostrar_referidos(query, context):
         f"• Por cada amigo que contrate Básico → 10% descuento en tu próximo mes.\n"
         f"• Por cada amigo que contrate Premium → 15% descuento.\n"
         f"¡Acumulable!"
-    )
-    keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
-    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def mostrar_soporte(query):
-    texto = (
-        "🆘 *Soporte*\n\n"
-        "Si tienes problemas, escribe tu consulta aquí mismo y un administrador te responderá a la mayor brevedad.\n\n"
-        "También puedes hacer una donación voluntaria a nuestra wallet USDT (BEP20):\n"
-        f"`{USDT_WALLET}`\n\n"
-        "¡Gracias por apoyar el proyecto! 💙"
     )
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
     await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
@@ -919,14 +918,12 @@ async def seleccionar_metodo(query, context):
     chat_id = query.from_user.id
     user = get_user(chat_id)
 
-    # Verificar si ya tiene ticket pendiente
     if get_pending_payment(chat_id):
         keyboard = [[InlineKeyboardButton("❌ Cancelar solicitud anterior", callback_data="cancelar_solicitud")],
                     [InlineKeyboardButton("🔙 Volver", callback_data="pagar_" + plan)]]
         await query.edit_message_text("⚠️ Ya tienes una solicitud pendiente. Cáncelala antes de crear una nueva.", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Calcular monto según promo
     monto_tarjeta = PRECIOS[plan]["tarjeta"]
     monto_saldo = PRECIOS[plan]["saldo"]
     if user.get('promo_end') and datetime.fromisoformat(user['promo_end']) > datetime.utcnow():
@@ -973,9 +970,7 @@ async def procesar_pago_usdt(query, context):
     if user.get('promo_end') and datetime.fromisoformat(user['promo_end']) > datetime.utcnow():
         monto_usdt = PROMO_DESCUENTO
 
-    # Crear factura Heleket (simulado)
     invoice_id = str(uuid.uuid4())
-    # En producción llamarías a Heleket API
     create_pending_payment(chat_id, plan, "usdt", None, monto_usdt, invoice_id=invoice_id)
 
     texto = (
@@ -998,18 +993,15 @@ async def cancelar_solicitud(query, context):
     await query.edit_message_text("✅ Solicitud cancelada. Puedes crear una nueva.")
 
 async def volver_inicio(query):
-    await start(query.message, None)  # Reutilizar start, pero query.message no es Update, habría que adaptar
-    # Alternativa simple:
     keyboard = [
         [InlineKeyboardButton("📦 Planes", callback_data="planes"),
          InlineKeyboardButton("🎁 Ventajas", callback_data="ventajas")],
         [InlineKeyboardButton("👥 Referidos", callback_data="referidos"),
          InlineKeyboardButton("🆘 Soporte", callback_data="soporte")],
-        [InlineKeyboardButton("🌐 WebApp", url=f"https://{request.host}/webapp")],
+        [InlineKeyboardButton("🌐 WebApp", url=f"https://{RENDER_EXTERNAL_HOSTNAME}/webapp")],
     ]
     await query.edit_message_text("¡Bienvenido de nuevo!", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Handler para recibir el teléfono del usuario
 async def recibir_telefono(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'esperando_telefono' not in context.user_data:
         return
@@ -1034,20 +1026,15 @@ async def recibir_telefono(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Ticket creado. Espera la confirmación.")
     context.user_data.pop('esperando_telefono')
 
-# Handlers de descargas (similares a versiones anteriores, con verificación de plan)
-# ... (omitido por brevedad, pero puedes incorporar la lógica de get_format_list y get_direct_url_with_format con PO Token)
-
 # Registrar handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_telefono))
-# Aquí irían los handlers de descarga
 
 # ================== SCHEDULER ==================
 scheduler = BackgroundScheduler()
 
 def check_promo_reminders():
-    # Buscar usuarios con promo próxima a expirar
     users = supabase.table("users").select("*").not_.is_("promo_end", "null").execute().data
     now = datetime.utcnow()
     for u in users:
@@ -1070,7 +1057,7 @@ def check_promo_reminders():
             supabase.table("users").update({"notified_expired": True}).eq("chat_id", u['chat_id']).execute()
 
 def keepalive_job():
-    requests.get(f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/keepalive", timeout=5)
+    requests.get(f"https://{RENDER_EXTERNAL_HOSTNAME}/keepalive", timeout=5)
 
 scheduler.add_job(check_promo_reminders, 'interval', hours=1)
 scheduler.add_job(keepalive_job, 'interval', minutes=5)
@@ -1081,8 +1068,6 @@ def run_bot():
     application.run_polling()
 
 if __name__ == "__main__":
-    # Iniciar bot en hilo
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    # Iniciar Flask
     app.run(host='0.0.0.0', port=PORT, debug=False)
