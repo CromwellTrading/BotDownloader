@@ -14,8 +14,10 @@ RUN apt-get update && apt-get install -y ffmpeg git && \
 # Establecemos el directorio de trabajo
 WORKDIR /app
 
-# Copiamos y instalamos dependencias Python
-COPY requirements.txt .
+# Copiamos el código del bot
+COPY main.py webapp.html requirements.txt ./
+
+# Instalamos dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Clonamos y compilamos el proveedor de PO tokens
@@ -23,23 +25,16 @@ RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bguti
 WORKDIR /bgutil/server
 RUN npm install && npx tsc
 
-# Volvemos al directorio de la app
 WORKDIR /app
 
-# Copiamos el código del bot
-COPY main.py webapp.html ./
-
-# Script de entrada: lanza el proveedor en background y luego el bot
+# Script de entrada: lanza proveedor en background y luego el bot (principal)
 RUN echo '#!/bin/bash\n\
 # Iniciar proveedor de PO tokens en segundo plano\n\
 node /bgutil/server/build/main.js > /var/log/bgutil.log 2>&1 &\n\
-# Esperar un par de segundos para que el proveedor se inicie\n\
-sleep 3\n\
-# Ejecutar el bot (Flask + Telegram)\n\
+# Esperar a que el proveedor esté listo\n\
+sleep 5\n\
+# Ejecutar el bot (Python)\n\
 python main.py\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Exponer puertos: Flask (8080) y proveedor (4416)
 EXPOSE 8080 4416
-
-# Comando por defecto
 CMD ["/entrypoint.sh"]
