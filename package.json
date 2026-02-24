@@ -1,18 +1,22 @@
 {
-  "name": "telegram-bot-descargador",
+  "name": "telegram-download-bot",
   "version": "1.0.0",
-  "description": "Bot de Telegram con pagos automáticos y webapp",
+  "description": "Bot de descargas con pagos automáticos",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "axios": "^1.6.0",
-    "dotenv": "^16.3.1",
+    "telegraf": "^4.16.3",
     "express": "^4.18.2",
-    "node-schedule": "^2.1.1",
-    "telegraf": "^4.15.0",
-    "uuid": "^9.0.1"
+    "@supabase/supabase-js": "^2.39.0",
+    "yt-dlp-exec": "^3.0.0",
+    "axios": "^1.6.2",
+    "uuid": "^9.0.1",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
