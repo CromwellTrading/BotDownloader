@@ -571,7 +571,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cancelar_solicitud":
         await cancelar_solicitud(query, context)
 
-async_todos mostrar_planes(query):
+async def mostrar_planes(query):
     texto = (
         "*📦 Planes disponibles:*\n\n"
         "🆓 *Gratuito*\n• 5 descargas/día\n• Redes sociales y sitios públicos\n\n"
@@ -587,9 +587,10 @@ async_todos mostrar_planes(query):
          InlineKeyboardButton("💎 Premium", callback_data="pagar_premium")],
         [InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]
     ]
-    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
 
-async_todos mostrar_ventajas(query):
+async def mostrar_ventajas(query):
     texto = (
         "*🎁 Ventajas de usar nuestro bot:*\n\n"
         "✅ Descarga desde más de 1000 sitios (YouTube, TikTok, Instagram, Facebook, Twitter, Vimeo, etc.)\n"
@@ -602,7 +603,8 @@ async_todos mostrar_ventajas(query):
         "✨ *¡Únete y empieza a descargar!*"
     )
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
-    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def mostrar_referidos(query, context):
     chat_id = query.from_user.id
@@ -619,7 +621,8 @@ async def mostrar_referidos(query, context):
         f"¡Acumulable!"
     )
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
-    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def mostrar_soporte(query):
     texto = (
@@ -629,7 +632,8 @@ async def mostrar_soporte(query):
         "¡Gracias! 💙"
     )
     keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="volver_inicio")]]
-    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def iniciar_pago_bot(query, context):
     plan = query.data.split('_')[1]
@@ -640,7 +644,8 @@ async def iniciar_pago_bot(query, context):
         [InlineKeyboardButton("🌍 Otro país", callback_data="pais_ext")],
         [InlineKeyboardButton("🔙 Volver", callback_data="planes")]
     ]
-    await query.edit_message_text(texto, reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(texto, reply_markup=reply_markup)
 
 async def seleccionar_pais(query, context):
     pais = query.data.split('_')[1]
@@ -652,7 +657,8 @@ async def seleccionar_pais(query, context):
             [InlineKeyboardButton("📱 Saldo móvil (Cubacel)", callback_data="metodo_saldo")],
             [InlineKeyboardButton("🔙 Volver", callback_data="pagar_" + context.user_data['plan_seleccionado'])]
         ]
-        await query.edit_message_text(texto, reply_markup=InlineKeyboardMarkup(keyboard))
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(texto, reply_markup=reply_markup)
     else:
         await procesar_pago_usdt(query, context)
 
@@ -666,7 +672,8 @@ async def seleccionar_metodo(query, context):
     if get_pending_payment(chat_id):
         keyboard = [[InlineKeyboardButton("❌ Cancelar solicitud anterior", callback_data="cancelar_solicitud")],
                     [InlineKeyboardButton("🔙 Volver", callback_data="pagar_" + plan)]]
-        await query.edit_message_text("⚠️ Ya tienes una solicitud pendiente. Cáncelala antes de crear una nueva.", reply_markup=InlineKeyboardMarkup(keyboard))
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("⚠️ Ya tienes una solicitud pendiente. Cáncelala antes de crear una nueva.", reply_markup=reply_markup)
         return
 
     monto_tarjeta = PRECIOS[plan]["tarjeta"]
@@ -712,7 +719,7 @@ async def procesar_pago_usdt(query, context):
     chat_id = query.from_user.id
     user = get_user(chat_id)
     monto_usdt = PRECIOS[plan]["usdt"]
-    if user.get('promo_end') and datetime.fromisoformat(user['promo_end']) > datetime.utcnow():
+    if user and user.get('promo_end') and datetime.fromisoformat(user['promo_end']) > datetime.utcnow():
         monto_usdt = PROMO_DESCUENTO
 
     # Crear factura vía API (que a su vez llama a Heleket)
@@ -734,7 +741,8 @@ async def procesar_pago_usdt(query, context):
                 f"El pago será verificado automáticamente en pocos minutos."
             )
             keyboard = [[InlineKeyboardButton("🔙 Volver", callback_data="planes")]]
-            await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=reply_markup)
         else:
             await query.edit_message_text("❌ Error al generar factura. Intenta más tarde.")
     except Exception as e:
@@ -754,7 +762,8 @@ async def volver_inicio(query):
          InlineKeyboardButton("🆘 Soporte", callback_data="soporte")],
         [InlineKeyboardButton("🌐 WebApp", url=f"https://{RENDER_EXTERNAL_HOSTNAME}/webapp")],
     ]
-    await query.edit_message_text("¡Bienvenido de nuevo!", reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("¡Bienvenido de nuevo!", reply_markup=reply_markup)
 
 async def recibir_telefono(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'esperando_telefono' not in context.user_data:
