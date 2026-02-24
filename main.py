@@ -921,13 +921,48 @@ scheduler.add_job(check_promo_reminders, 'interval', hours=1)
 scheduler.add_job(keepalive_job, 'interval', minutes=5)
 
 # ================== MAIN ==================
+import multiprocessing
+
 def run_flask():
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    """Ejecuta Flask con Gunicorn (producción)"""
+    from gunicorn.app.base import BaseApplication
+
+    class StandaloneApplication(BaseApplication):
+        def __init__(self, app, options=None):
+            self.options = options or {}
+            self.application = app
+            super().__init__()
+
+        def load_config(self):
+            for key, value in self.options.items():
+                self.cfg.set(key, value)
+
+        def load(self):
+            return self.application
+
+    options = {
+        'bind': f'0.0.0.0:{PORT}',
+        'workers': 1,  # 1 worker es suficiente para este caso
+        'threads': 4,
+        'accesslog': '-',
+        'errorlog': '-',
+        'loglevel': 'info'
+    }
+    StandaloneApplication(app, options).run()
+
+def run_bot():
+    """Ejecuta el bot de Telegram (debe estar en el hilo principal)"""
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
+    # Iniciar scheduler (esto es seguro en cualquier hilo)
     if not scheduler.running:
         scheduler.start()
-    # Ejecutar bot en hilo separado
-    threading.Thread(target=application.run_polling, kwargs={"drop_pending_updates": True}, daemon=True).start()
-    # Ejecutar Flask en hilo principal
-    run_flask()
+    
+    # Iniciar Flask en un proceso/hilo separado
+    # Usamos multiprocessing para que sea un proceso real, no un hilo
+    flask_process = multiprocessing.Process(target=run_flask, daemon=True)
+    flask_process.start()
+    
+    # El bot se ejecuta en el hilo principal
+    run_bot()
