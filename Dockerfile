@@ -1,40 +1,35 @@
-# Usamos una imagen base con Python y Node (slim para ahorrar espacio)
-FROM python:3.11-slim
+# Dockerfile para Shiro Synthesis Two Bot
+FROM node:18-alpine AS builder
 
-# Instalamos Node.js 18 (necesario para compilar el proveedor)
-RUN apt-get update && apt-get install -y curl gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Instalamos dependencias del sistema para yt-dlp y compilación
-RUN apt-get update && apt-get install -y ffmpeg git && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Establecemos el directorio de trabajo
+# Establecer directorio de trabajo
 WORKDIR /app
 
-# Copiamos el código del bot
-COPY main.py webapp.html requirements.txt ./
+# Copiar archivos de dependencias
+COPY package*.json ./
 
-# Instalamos dependencias Python
-RUN pip install --no-cache-dir -r requirements.txt
+# Instalar todas las dependencias (incluyendo dev para posible compilación)
+RUN npm ci
 
-# Clonamos y compilamos el proveedor de PO tokens
-RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /bgutil
-WORKDIR /bgutil/server
-RUN npm install && npx tsc
+# -----------------------------
+# Etapa de producción
+FROM node:18-alpine
+
+# Crear usuario no root
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 
 WORKDIR /app
 
-# Script de entrada: lanza proveedor en background y luego el bot (principal)
-RUN echo '#!/bin/bash\n\
-# Iniciar proveedor de PO tokens en segundo plano\n\
-node /bgutil/server/build/main.js > /var/log/bgutil.log 2>&1 &\n\
-# Esperar a que el proveedor esté listo\n\
-sleep 5\n\
-# Ejecutar el bot (Python)\n\
-python main.py\n' > /entrypoint.sh && chmod +x /entrypoint.sh
+# Copiar dependencias de la etapa builder
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 
-EXPOSE 8080 4416
-CMD ["/entrypoint.sh"]
+# Copiar código fuente
+COPY --chown=nodejs:nodejs . .
+
+# Exponer puerto (si se usa webhook)
+EXPOSE 3000
+
+# Cambiar a usuario no root
+USER nodejs
+
+# Comando para iniciar el bot
+CMD ["node", "shiro-telegram.js"]
