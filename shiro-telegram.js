@@ -1,16 +1,6 @@
 /**
  * shiro-telegram.js
- * Shiro Synthesis Two - Versión ULTRA COMPLETA
- * Incluye:
- * - Prompt ultra-humano extendido
- * - Selección dinámica de modelos según intención (OpenRouter)
- * - Moderación avanzada con acciones graduales
- * - Memoria total en Supabase (mensajes, perfiles, conocimiento)
- * - Flujo de administración con botones (solo admin)
- * - Flujo de cliente con botones (privado)
- * - Eventos de grupo (bienvenida, despedida, cambio de nombre)
- * - Webhook de pagos
- * - Sin límites de cooldown
+ * Shiro Synthesis Two - Versión ULTRA con botones nativos, correcciones Supabase y keep alive interno
  */
 
 require('dotenv').config();
@@ -33,6 +23,7 @@ const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID ? parseInt(process.env.A
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const TIMEZONE = process.env.TIMEZONE || 'America/Mexico_City';
 const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN || 'secretparserasche';
+const PUBLIC_URL = process.env.PUBLIC_URL || ''; // Para keep alive
 
 // Modelos de OpenRouter organizados por categoría
 const MODEL_CONFIG = {
@@ -46,7 +37,7 @@ const MODEL_CONFIG = {
 };
 
 // ========== CONSTANTES ==========
-const MAX_HISTORY_MESSAGES = 100; // Para el contexto inmediato
+const MAX_HISTORY_MESSAGES = 100;
 const WARN_LIMIT = 4;
 const STATE_CHANCE = 0.05;
 const SPONTANEOUS_CHANCE = 0.4;
@@ -97,11 +88,12 @@ let lastNudgeTime = 0;
 let nudgeSent = false;
 let silentCooldownUntil = 0;
 let adminAvailable = true;
-let businessMode = false;
+let businessMode = false;       // Modo recarga para admin
+let customerMode = false;       // Modo ofertas para cliente
 let adminTestMode = false;
 let pendingConfirmation = null;
 
-// Estructuras en memoria (respaldo para Supabase)
+// Estructuras en memoria
 let inMemoryLastUserMessages = new Map();
 let inMemoryBotConfig = {
   personalityTraits: {},
@@ -150,6 +142,24 @@ async function sendMessage(chatId, text, options = {}) {
     console.error('Error enviando mensaje a Telegram:', e.message);
   }
 }
+
+// ========== TECLADOS NATIVOS ==========
+const getMainKeyboard = (isAdmin) => {
+  const buttons = [];
+  if (isAdmin) {
+    buttons.push(['👑 Panel Admin']);
+  }
+  buttons.push(['🛒 Ofertas']);
+  return Markup.keyboard(buttons).resize();
+};
+
+const getAdminModeKeyboard = () => {
+  return Markup.keyboard([['🚪 Salir Panel Admin'], ['🛒 Ofertas']]).resize();
+};
+
+const getCustomerModeKeyboard = () => {
+  return Markup.keyboard([['🚪 Salir de ofertas']]).resize();
+};
 
 // ========== LISTAS PARA MODERACIÓN ==========
 const ALLOWED_DOMAINS = [
@@ -351,8 +361,7 @@ function getUserDisplayName(ctx) {
   return ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name || 'Usuario';
 }
 
-// ========== FUNCIONES DE ACCESO A SUPABASE ==========
-// (Incluye todas las funciones existentes y nuevas)
+// ========== FUNCIONES DE ACCESO A SUPABASE (CORREGIDAS) ==========
 
 // Warnings
 async function getUserWarnings(participant) {
@@ -377,7 +386,7 @@ async function resetUserWarnings(participant) {
   await supabaseClient.from('warnings').delete().eq('participant', participant);
 }
 
-// Mensajes
+// Mensajes (corregido: reply_to_message_id como texto)
 async function saveMessageToDB(chatId, userId, username, firstName, messageText, replyToId = null, isBot = false) {
   const { error } = await supabaseClient
     .from('messages')
@@ -387,7 +396,7 @@ async function saveMessageToDB(chatId, userId, username, firstName, messageText,
       username,
       first_name: firstName,
       message_text: messageText,
-      reply_to_message_id: replyToId,
+      reply_to_message_id: replyToId ? String(replyToId) : null,
       is_bot: isBot,
       timestamp: new Date()
     });
@@ -449,7 +458,7 @@ async function getConversationMemory(userId) {
   return data;
 }
 
-// Conocimiento global
+// Conocimiento global (corregido)
 async function saveKnowledge(key, value, sourceParticipant = null) {
   const { data: existing } = await supabaseClient
     .from('knowledge')
@@ -474,10 +483,13 @@ async function saveKnowledge(key, value, sourceParticipant = null) {
 }
 
 async function getRelevantKnowledge(query) {
-  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  // Filtrar palabras de al menos 4 caracteres y solo letras (incluyendo tildes y ñ)
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length >= 4 && /^[a-záéíóúüñ]+$/.test(w));
   if (words.length === 0) return [];
   
-  const conditions = words.map(w => `key ilike '%${w}%'`).join(' or ');
+  // Construir condiciones seguras escapando comillas simples
+  const conditions = words.map(w => `key ILIKE '%${w.replace(/'/g, "''")}%'`).join(' OR ');
+  
   const { data, error } = await supabaseClient
     .from('knowledge')
     .select('key, value, confidence')
@@ -489,7 +501,7 @@ async function getRelevantKnowledge(query) {
     console.error('Error fetching knowledge:', error.message);
     return [];
   }
-  return data;
+  return data || [];
 }
 
 // Sugerencias
@@ -860,10 +872,10 @@ function parseOffersText(offersText) {
 }
 
 // ========== CHECKER DE SILENCIO ==========
-const SILENCE_THRESHOLD = 1000 * 60 * 60;
-const RESPONSE_WINDOW_AFTER_NUDGE = 1000 * 60 * 10;
-const MIN_COOLDOWN = 1000 * 60 * 60 * 2;
-const MAX_COOLDOWN = 1000 * 60 * 60 * 3;
+const SILENCE_THRESHOLD = 1000 * 60 * 60; // 1 hora
+const RESPONSE_WINDOW_AFTER_NUDGE = 1000 * 60 * 10; // 10 minutos
+const MIN_COOLDOWN = 1000 * 60 * 60 * 2; // 2 horas
+const MAX_COOLDOWN = 1000 * 60 * 60 * 3; // 3 horas
 
 const nudgeMessages = [
   "¿Están muy callados hoy? 😶",
@@ -985,7 +997,6 @@ async function callOpenRouterWithIntent(messages, text) {
     console.error(`❌ Error con modelo ${model}:`, err.message);
     const latency = Date.now() - startTime;
     await logModelUsage(model, classifyIntent(text), 0, 0, latency, false);
-    // Fallback al modelo por defecto
     try {
       console.log('⚠️ Usando modelo por defecto como fallback');
       const fallbackCompletion = await openrouter.chat.completions.create({
@@ -1022,14 +1033,14 @@ async function handleAdminMessage(ctx) {
 
   if (plainLower === '!modo recarga' || plainLower === '/modorecarga') {
     businessMode = true;
-    await ctx.reply('✅ Modo negocio activado. Puedes añadir o editar productos. (Pero no te confíes, que igual puedo sabotear algo... es broma... o no 😈)');
+    await ctx.reply('✅ Modo negocio activado. Puedes añadir o editar productos. (Pero no te confíes, que igual puedo sabotear algo... es broma... o no 😈)', getAdminModeKeyboard());
     return true;
   }
 
   if (plainLower === 'salir modo negocio' || plainLower === '/salirmodonegocio') {
     businessMode = false;
     pendingConfirmation = null;
-    await ctx.reply('👋 Modo negocio desactivado. (Volvemos a la rutina, qué aburrido... 😴)');
+    await ctx.reply('👋 Modo negocio desactivado. (Volvemos a la rutina, qué aburrido... 😴)', getMainKeyboard(true));
     return true;
   }
 
@@ -1581,6 +1592,51 @@ bot.on('message', async (ctx) => {
     lastActivity = Date.now();
   }
 
+  // Manejar botones nativos
+  if (text === '👑 Panel Admin' && isAdmin && isPrivate) {
+    businessMode = true;
+    await ctx.reply('✅ Modo administrador activado. Usa los botones inline para gestionar.', getAdminModeKeyboard());
+    return;
+  }
+
+  if (text === '🚪 Salir Panel Admin' && isAdmin && isPrivate) {
+    businessMode = false;
+    await ctx.reply('👋 Modo administrador desactivado.', getMainKeyboard(true));
+    return;
+  }
+
+  if (text === '🛒 Ofertas') {
+    if (isPrivate) {
+      // Iniciar modo cliente
+      customerMode = true;
+      await ctx.reply('🛍️ Te mostraré el catálogo de juegos.', getCustomerModeKeyboard());
+      // Mostrar catálogo inmediatamente
+      const games = await getGames();
+      if (!games.length) {
+        await ctx.reply('📭 Por ahora no hay juegos disponibles.');
+      } else {
+        const buttons = games.map(g => Markup.button.callback(g.name, `game_${g.id}`));
+        const rows = [];
+        for (let i = 0; i < buttons.length; i += 2) {
+          rows.push(buttons.slice(i, i+2));
+        }
+        const keyboard = Markup.inlineKeyboard(rows);
+        await ctx.reply('🎮 *Juegos disponibles:*', { parse_mode: 'Markdown', ...keyboard });
+        userSessions.set(userId, { step: 'awaiting_offers_selection' });
+      }
+    } else {
+      await ctx.reply('📢 Para ver ofertas, escríbeme al privado.');
+    }
+    return;
+  }
+
+  if (text === '🚪 Salir de ofertas' && isPrivate) {
+    customerMode = false;
+    userSessions.delete(userId);
+    await ctx.reply('👋 Has salido del modo ofertas. Vuelve cuando quieras.', getMainKeyboard(isAdmin));
+    return;
+  }
+
   // Moderación en grupo (solo para no admins)
   if (isGroup && chatId === TARGET_GROUP_ID && !isAdmin) {
     const urls = text.match(urlRegex);
@@ -1593,7 +1649,7 @@ bot.on('message', async (ctx) => {
             user_id: String(userId),
             action: 'delete_message',
             reason: 'enlace no permitido',
-            message_id: msg.message_id,
+            message_id: String(msg.message_id),
             timestamp: new Date()
           });
           const warnCount = await incrementUserWarnings(userId.toString());
@@ -1732,7 +1788,6 @@ bot.on('message', async (ctx) => {
       true
     );
 
-    // Aprender algo simple
     if (text.toLowerCase().includes('me gusta') && text.toLowerCase().includes('anime')) {
       await saveConversationMemory(userId.toString(), 'gusto_anime', 'Sí', 1);
     }
@@ -1812,6 +1867,22 @@ app.post('/webhook/:token', async (req, res) => {
   }
 });
 
+// ========== KEEP ALIVE INTERNO ==========
+function startKeepAlive() {
+  if (!PUBLIC_URL) {
+    console.log('⚠️ PUBLIC_URL no definido, keep alive no activado.');
+    return;
+  }
+  setInterval(async () => {
+    try {
+      const response = await axios.get(PUBLIC_URL);
+      console.log(`🔄 Keep alive ping a ${PUBLIC_URL} - Status: ${response.status}`);
+    } catch (err) {
+      console.error('❌ Error en keep alive:', err.message);
+    }
+  }, 10 * 60 * 1000); // cada 10 minutos
+}
+
 // ========== INICIALIZACIÓN DE TABLAS ==========
 async function ensureTables() {
   const tables = [
@@ -1843,17 +1914,16 @@ async function ensureTables() {
 
 // ========== INICIAR BOT ==========
 async function startBot() {
-  console.log('--- Iniciando Shiro Synthesis Two para Telegram (versión ULTRA COMPLETA) ---');
+  console.log('--- Iniciando Shiro Synthesis Two para Telegram (versión ULTRA con botones nativos y keep alive) ---');
 
   await ensureTables();
   await loadBotConfig();
 
   bot.start(async (ctx) => {
     if (ctx.chat.type === 'private') {
-      if (ctx.from.id === ADMIN_TELEGRAM_ID) {
-        await showAdminMainMenu(ctx);
-      } else {
-        await ctx.reply('¡Hola! Soy Shiro, tu asistente de recargas. ¿En qué juego o producto puedo ayudarte?');
+      const isAdmin = (ctx.from.id === ADMIN_TELEGRAM_ID);
+      await ctx.reply('¡Hola! Soy Shiro, tu asistente virtual.', getMainKeyboard(isAdmin));
+      if (!isAdmin) {
         userSessions.set(ctx.from.id, { step: 'initial' });
       }
     }
@@ -1862,6 +1932,8 @@ async function startBot() {
   if (TARGET_GROUP_ID) {
     startSilenceChecker();
   }
+
+  startKeepAlive();
 
   bot.launch().then(() => {
     console.log('✅ Bot de Telegram iniciado');
