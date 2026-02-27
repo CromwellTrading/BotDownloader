@@ -486,17 +486,20 @@ async function getRelevantKnowledge(query) {
   // Filtrar palabras de al menos 4 caracteres y solo letras (incluyendo tildes y ñ)
   const words = query.toLowerCase().split(/\s+/).filter(w => w.length >= 4 && /^[a-záéíóúüñ]+$/.test(w));
   if (words.length === 0) return [];
+
+  // Escapar comillas simples para evitar errores de sintaxis
+  const escapedWords = words.map(w => w.replace(/'/g, "''"));
   
-  // Construir condiciones seguras escapando comillas simples
-  const conditions = words.map(w => `key ILIKE '%${w.replace(/'/g, "''")}%'`).join(' OR ');
-  
+  // Construir condiciones de forma segura usando .or() de Supabase
+  const conditions = escapedWords.map(w => `key ILIKE '%${w}%'`).join(',');
+
   const { data, error } = await supabaseClient
     .from('knowledge')
     .select('key, value, confidence')
-    .or(conditions)
+    .or(conditions) // Pasar la cadena directamente
     .order('confidence', { ascending: false })
     .limit(5);
-  
+
   if (error) {
     console.error('Error fetching knowledge:', error.message);
     return [];
